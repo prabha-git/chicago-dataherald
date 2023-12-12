@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "80:80"
+      - "8080:80"
     command: uvicorn dataherald.app:app --host 0.0.0.0 --port 80 --log-config log_config.yml --log-level debug --reload
     stdin_open: true
     tty: true

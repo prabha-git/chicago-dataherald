@@ -83,6 +83,8 @@ class Response(BaseModel):
     total_cost: float | None = None
     confidence_score: float | None = None
     created_at: datetime = Field(default_factory=datetime.now)
+    run_url: str | None
+    run_id: str | None
 
     @validator("created_at", pre=True)
     def parse_datetime_with_timezone(cls, value):

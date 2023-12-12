@@ -14,12 +14,13 @@ from google.api_core.exceptions import GoogleAPIError
 from langchain.agents.agent import AgentExecutor
 from langchain.agents.agent_toolkits.base import BaseToolkit
 from langchain.agents.mrkl.base import ZeroShotAgent
-from langchain.callbacks import get_openai_callback
+from langchain.callbacks import get_openai_callback, tracing_v2_enabled
 from langchain.callbacks.base import BaseCallbackManager
 from langchain.callbacks.manager import (
     AsyncCallbackManagerForToolRun,
     CallbackManagerForToolRun,
 )
+from langsmith import Client
 from langchain.chains.llm import LLMChain
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.schema import AgentAction
@@ -612,6 +613,7 @@ class DataheraldSQLAgent(SQLGenerator):
             temperature=0,
             model_name=os.getenv("LLM_MODEL", "gpt-4-1106-preview"),
         )
+        langsmith_client = Client()
         repository = TableDescriptionRepository(storage)
         db_scan = repository.get_all_tables_by_db(
             {
@@ -654,22 +656,26 @@ class DataheraldSQLAgent(SQLGenerator):
         agent_executor.handle_parsing_errors = True
         with get_openai_callback() as cb:
             try:
-                result = agent_executor({"input": user_question.question})
-                result = self.check_for_time_out_or_tool_limit(result)
+                with tracing_v2_enabled() as cb_ls:
+                    result = agent_executor({"input": user_question.question})
+                    result = self.check_for_time_out_or_tool_limit(result)
+                    latest_run_id = str(cb_ls.latest_run.id)
+                    run_url = langsmith_client.share_run(run_id=latest_run_id)
             except SQLInjectionError as e:
                 raise SQLInjectionError(e) from e
             except EngineTimeOutORItemLimitError as e:
                 raise EngineTimeOutORItemLimitError(e) from e
             except Exception as e:
-                return Response(
-                    question_id=user_question.id,
-                    total_tokens=cb.total_tokens,
-                    total_cost=cb.total_cost,
-                    sql_query="",
-                    sql_generation_status="INVALID",
-                    sql_query_result=None,
-                    error_message=str(e),
-                )
+                        return Response(
+                            question_id=user_question.id,
+                            total_tokens=cb.total_tokens,
+                            total_cost=cb.total_cost,
+                            sql_query="",
+                            sql_generation_status="INVALID",
+                            sql_query_result=None,
+                            error_message=str(e),
+                        )
+
         sql_query_list = []
         for step in result["intermediate_steps"]:
             action = step[0]
@@ -693,6 +699,8 @@ class DataheraldSQLAgent(SQLGenerator):
             total_tokens=cb.total_tokens,
             total_cost=cb.total_cost,
             sql_query=sql_query_list[-1] if len(sql_query_list) > 0 else "",
+            run_url= run_url,
+            run_id = latest_run_id
         )
         return self.create_sql_query_status(
             self.database,
